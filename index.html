@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://libtl.com/sdk.js" data-zone="9900692" data-sdk="show_9900692"></script>
+<style>
+body{font-family:Arial;background:#0f172a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
+h2{color:#38bdf8}
+.btn{background:#22c55e;color:#fff;border:none;padding:16px 30px;border-radius:14px;font-size:18px;font-weight:bold;cursor:pointer;box-shadow:0 4px 14px rgba(34,197,94,.4)}
+.btn:active{transform:scale(.96)}
+p{opacity:.8}
+</style>
+</head>
+<body>
+<h2>🔐 Verify to Unlock</h2>
+<p>Tap button, watch short ad<br>then you will be verified automatically</p>
+<button class="btn" id="watch">📺 WATCH AD & VERIFY</button>
+<p id="status" style="margin-top:14px;font-size:13px;color:#facc15"></p>
+<script>
+let tg=window.Telegram.WebApp;
+try{ tg.expand(); tg.ready(); }catch(e){}
+let p=new URLSearchParams(location.search);
+let verifyUrl=p.get("verify");
+document.getElementById('watch').onclick=function(){
+ let btn=this;
+ btn.innerText='⏳ Loading Ad...';
+ document.getElementById('status').innerText='';
+ function doVerify(){
+   document.getElementById('status').innerText='✅ Ad watched! Verifying...';
+   try{ tg.sendData(JSON.stringify({verified:true,zone:"9900692"})); }catch(e){}
+   if(verifyUrl){
+     fetch(decodeURIComponent(verifyUrl)).then(r=>r.text()).then(t=>{
+       document.getElementById('status').innerText='✅ Verified! Go back to bot & tap Check Again';
+       setTimeout(()=>{try{tg.close();}catch(e){}},1200);
+     }).catch(e=>{
+       document.getElementById('status').innerText='✅ Ad done! Now go back & tap Check Again';
+       setTimeout(()=>{try{tg.close();}catch(e){}},800);
+     });
+   } else {
+     document.getElementById('status').innerText='✅ Verified! Go back to bot';
+     setTimeout(()=>{try{tg.close();}catch(e){}},800);
+   }
+ }
+ if(typeof show_9900692==='function'){
+   show_9900692().then(doVerify).catch(e=>{
+     btn.innerText='📺 WATCH AD & VERIFY';
+     document.getElementById('status').innerText='❌ Ad not ready, try again in 5 sec';
+   });
+ } else {
+   btn.innerText='📺 WATCH AD & VERIFY';
+   document.getElementById('status').innerText='❌ Ad script not loaded, check internet & try again';
+ }
+};
+</script>
+</body>
+</html>
