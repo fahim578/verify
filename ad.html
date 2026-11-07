@@ -9,96 +9,148 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 background:#0e1621;color:#fff;min-height:100vh;display:flex;align-items:center;
-justify-content:center;padding:24px}
-.card{background:#17212b;border-radius:18px;padding:32px 24px;max-width:420px;
+justify-content:center;padding:20px}
+.card{background:#17212b;border-radius:18px;padding:30px 22px;max-width:420px;
 width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.45)}
-h1{font-size:22px;margin-bottom:8px}
-p{color:#8fa3b8;font-size:15px;line-height:1.6;margin-bottom:20px}
+h1{font-size:21px;margin-bottom:8px}
+p{color:#8fa3b8;font-size:14px;line-height:1.6;margin-bottom:18px}
 .btn{display:block;width:100%;padding:16px;border:0;border-radius:12px;
-background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer}
+background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer;
+transition:background .2s}
 .btn:disabled{background:#2b3a4a;color:#7a8fa3;cursor:not-allowed}
-.note{font-size:13px;color:#6b8299;margin-top:16px;line-height:1.5}
-.state{font-size:16px;font-weight:600;padding:14px;border-radius:12px;margin-top:18px}
-.ok{background:#1b3a2a;color:#4ade80}
-.bad{background:#3a1b1b;color:#f87171}
-.wait{background:#3a321b;color:#fbbf24}
+.state{font-size:15px;font-weight:600;padding:14px;border-radius:12px;
+margin-top:16px;display:none;line-height:1.5}
+.ok{background:#1b3a2a;color:#4ade80;display:block}
+.bad{background:#3a1b1b;color:#f87171;display:block}
+.wait{background:#3a321b;color:#fbbf24;display:block}
+.note{font-size:12px;color:#6b8299;margin-top:16px;line-height:1.5}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>📺 Watch the ad</h1>
-  <p id="sub">The ad must be watched until the end. Only then is it counted.</p>
-  <button class="btn" id="go">▶ Watch Ad</button>
-  <div class="state wait" id="state" style="display:none"></div>
-  <p class="note" id="note">After the ad, go back to Telegram — the code unlocks by itself.</p>
+  <p id="sub">The ad must play until the end. Only then is it counted.</p>
+  <button class="btn" id="go" disabled>⏳ Preparing…</button>
+  <div class="state" id="state"></div>
+  <p class="note">After the ad, go back to Telegram — your promo code unlocks by itself.</p>
 </div>
+
 <script>
 (function () {
   var q = new URLSearchParams(location.search);
-  var token = q.get("t") || "";
-  var cb = q.get("cb") || "";
-  var go = document.getElementById("go");
-  var state = document.getElementById("state");
-  var sub = document.getElementById("sub");
-  var busy = false;
+  var TOKEN = q.get("t") || "";
+  var CB = q.get("cb") || "";
+
+  var MIN = 15;          // seconds the ad must really run (bot corrects this)
+  var readyAt = 0;       // local stopwatch start
+  var adOpen = false;
   var rewarded = false;
+  var busy = false;
+
+  var go = document.getElementById("go");
+  var stateEl = document.getElementById("state");
+  var sub = document.getElementById("sub");
 
   function say(text, cls) {
-    state.style.display = "block";
-    state.className = "state " + cls;
-    state.textContent = text;
+    stateEl.className = "state " + cls;
+    stateEl.textContent = text;
   }
 
-  function report() {
-    if (!cb || !token) {
-      say("⚠️ This page was opened without a bot session. Open it from Telegram.", "bad");
-      return;
-    }
-    say("⏳ Counting the ad…", "wait");
-    var url = cb + (cb.indexOf("?") >= 0 ? "&" : "?") + "t=" + encodeURIComponent(token);
-    fetch(url, { method: "GET", mode: "cors" })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d && (d.ok === true || d.verified === true)) {
-          say("✅ Ad counted! Go back to Telegram.", "ok");
-          sub.textContent = "Your promo code progress was updated.";
-        } else if (d && d.error === "too fast") {
-          say("⏱ Ad too short. Watch it fully next time.", "bad");
-        } else if (d && d.error) {
-          say("⚠️ " + d.error, "bad");
-        } else {
-          say("⚠️ Not counted. Try again.", "bad");
-        }
-        go.disabled = false;
-        go.textContent = "▶ Watch another ad";
-      })
+  function join(base, pair) {
+    return base + (base.indexOf("?") >= 0 ? "&" : "?") + pair;
+  }
+
+  // send a GET to the bot. If CORS blocks the answer, at least deliver it.
+  function ping(url, wantJson) {
+    return fetch(url, { method: "GET", mode: "cors", cache: "no-store" })
+      .then(function (r) { return wantJson ? r.json() : true; })
       .catch(function () {
-        say("⚠️ Network problem. Go back to Telegram and check 📊 Progress.", "bad");
-        go.disabled = false;
+        return fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" })
+          .then(function () { return wantJson ? null : true; })
+          .catch(function () { return null; });
       });
   }
 
-  function start() {
-    if (busy) return;
+  // ---------- 1) the page is open: start the stopwatch in the bot ----------
+  function announceOpen() {
+    if (!CB || !TOKEN) {
+      say("⚠️ Open this page from the Telegram bot, not directly.", "bad");
+      go.textContent = "❌ Not available";
+      return;
+    }
+    readyAt = Date.now();
+    var url = join(CB, "t=" + encodeURIComponent(TOKEN) + "&a=start");
+    ping(url, true).then(function (d) {
+      if (d && typeof d.need !== "undefined") {
+        var n = parseInt(d.need, 10);
+        if (n > 0) { MIN = n; }
+      }
+      go.disabled = false;
+      go.textContent = "▶ Watch Ad";
+      say("✅ Ready. The ad must play for at least " + MIN + " seconds.", "wait");
+    });
+  }
+
+  // ---------- 2) report the finished ad ----------
+  function report() {
+    var elapsed = Math.floor((Date.now() - readyAt) / 1000);
+    var left = MIN - elapsed;
+
+    if (left > 0) {
+      say("⏳ Keep the ad open — " + left + "s left…", "wait");
+      setTimeout(report, 1000);
+      return;
+    }
+
+    say("⏳ Counting…", "wait");
+    var url = join(CB, "t=" + encodeURIComponent(TOKEN));
+    ping(url, true).then(function (d) {
+      if (d && (d.ok === true || d.verified === true)) {
+        say("✅ Ad counted! Go back to Telegram.", "ok");
+        sub.textContent = "Your promo code progress was updated.";
+      } else if (d && d.error === "too fast") {
+        say("⏱ The ad was too short. Watch it fully next time.", "bad");
+      } else if (d && d.error === "ad not opened") {
+        say("⚠️ Session lost. Go back to Telegram and tap Watch Ad again.", "bad");
+      } else if (d && d.error === "unknown token") {
+        say("⚠️ This link was already used. Tap Watch Ad again in the bot.", "bad");
+      } else if (d && d.error) {
+        say("⚠️ " + d.error, "bad");
+      } else if (d === null) {
+        say("⚠️ Go back to Telegram and check 📊 Progress.", "bad");
+      } else {
+        say("⚠️ Not counted. Tap Watch Ad again in the bot.", "bad");
+      }
+      go.disabled = false;
+      go.textContent = "▶ Watch another ad";
+      busy = false;
+    });
+  }
+
+  // ---------- 3) the ad itself ----------
+  function startAd() {
+    if (busy || rewarded) { return; }
     busy = true;
-    rewarded = false;
+    adOpen = true;
     go.disabled = true;
     go.textContent = "Loading ad…";
     say("⏳ Opening the ad…", "wait");
 
-    var fn = window["show_9900692"];
+    var fn = window.show_9900692;
     if (typeof fn !== "function") {
       busy = false;
+      adOpen = false;
       go.disabled = false;
       go.textContent = "▶ Watch Ad";
-      say("⚠️ Ad not ready. Reload this page.", "bad");
+      say("⚠️ The ad did not load. Check your internet and reload this page.", "bad");
       return;
     }
 
     function won() {
-      if (rewarded) return;
+      if (rewarded) { return; }
       rewarded = true;
-      busy = false;
+      adOpen = false;
+      go.textContent = "⏳ Finishing…";
       report();
     }
 
@@ -112,15 +164,17 @@ background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer}
           setTimeout(function () {
             if (!rewarded) {
               busy = false;
+              adOpen = false;
               go.disabled = false;
               go.textContent = "▶ Watch Ad";
-              say("❌ Ad was skipped — not counted.", "bad");
+              say("❌ Ad skipped — not counted. Watch it to the end.", "bad");
             }
-          }, 1500);
+          }, 1200);
         }
       });
     } catch (e) {
       busy = false;
+      adOpen = false;
       go.disabled = false;
       go.textContent = "▶ Watch Ad";
       say("⚠️ Could not open the ad. Reload and try again.", "bad");
@@ -130,19 +184,16 @@ background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer}
     if (res && typeof res.then === "function") {
       res.then(function () { won(); }, function () {
         busy = false;
+        adOpen = false;
         go.disabled = false;
         go.textContent = "▶ Watch Ad";
-        say("❌ Ad was not completed — not counted.", "bad");
+        say("❌ Ad not completed — not counted.", "bad");
       });
     }
   }
 
-  go.addEventListener("click", start);
-
-  if (!token) {
-    say("⚠️ Open this page from the bot, not directly.", "bad");
-    go.disabled = true;
-  }
+  go.addEventListener("click", startAd);
+  announceOpen();
 })();
 </script>
 </body>
