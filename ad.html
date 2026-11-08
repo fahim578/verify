@@ -1,29 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="//libtl.com/sdk.js" data-zone="12215011" data-sdk="show_12215011"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>Watch Ad to Unlock</title>
-<script src="https://libtl.com/sdk.js" data-zone="9900692" data-sdk="show_9900692"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-background:#0e1621;color:#fff;min-height:100vh;display:flex;align-items:center;
-justify-content:center;padding:20px}
-.card{background:#17212b;border-radius:18px;padding:30px 22px;max-width:420px;
-width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.45)}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0e1621;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#17212b;border-radius:18px;padding:30px 22px;max-width:420px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.45)}
 h1{font-size:21px;margin-bottom:8px}
 p{color:#8fa3b8;font-size:14px;line-height:1.6;margin-bottom:18px}
-.btn{display:block;width:100%;padding:16px;border:0;border-radius:12px;
-background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer;
-transition:background .2s}
+.btn{display:block;width:100%;padding:16px;border:0;border-radius:12px;background:#2ea6ff;color:#fff;font-size:17px;font-weight:600;cursor:pointer}
 .btn:disabled{background:#2b3a4a;color:#7a8fa3;cursor:not-allowed}
-.state{font-size:15px;font-weight:600;padding:14px;border-radius:12px;
-margin-top:16px;display:none;line-height:1.5}
+.state{font-size:15px;font-weight:600;padding:14px;border-radius:12px;margin-top:16px;display:none;line-height:1.5}
 .ok{background:#1b3a2a;color:#4ade80;display:block}
 .bad{background:#3a1b1b;color:#f87171;display:block}
 .wait{background:#3a321b;color:#fbbf24;display:block}
-.note{font-size:12px;color:#6b8299;margin-top:16px;line-height:1.5}
+.note{font-size:11px;color:#5d7186;margin-top:14px;line-height:1.5;word-break:break-all}
 </style>
 </head>
 <body>
@@ -32,7 +26,7 @@ margin-top:16px;display:none;line-height:1.5}
   <p id="sub">The ad must play until the end. Only then is it counted.</p>
   <button class="btn" id="go" disabled>⏳ Preparing…</button>
   <div class="state" id="state"></div>
-  <p class="note">After the ad, go back to Telegram — your promo code unlocks by itself.</p>
+  <p class="note" id="dbg"></p>
 </div>
 
 <script>
@@ -40,160 +34,125 @@ margin-top:16px;display:none;line-height:1.5}
   var q = new URLSearchParams(location.search);
   var TOKEN = q.get("t") || "";
   var CB = q.get("cb") || "";
+  var FN = "show_12215011";   // exact name from the Monetag snippet
 
-  var MIN = 15;          // seconds the ad must really run (bot corrects this)
-  var readyAt = 0;       // local stopwatch start
-  var adOpen = false;
-  var rewarded = false;
-  var busy = false;
-
+  var MIN = 12, readyAt = 0, rewarded = false, busy = false;
   var go = document.getElementById("go");
-  var stateEl = document.getElementById("state");
+  var st = document.getElementById("state");
   var sub = document.getElementById("sub");
+  var dbg = document.getElementById("dbg");
 
-  function say(text, cls) {
-    stateEl.className = "state " + cls;
-    stateEl.textContent = text;
-  }
+  function say(t, c) { st.className = "state " + c; st.style.display = "block"; st.textContent = t; }
+  function info(t) { dbg.textContent = t; }
+  function join(base, pair) { return base + (base.indexOf("?") >= 0 ? "&" : "?") + pair; }
 
-  function join(base, pair) {
-    return base + (base.indexOf("?") >= 0 ? "&" : "?") + pair;
-  }
-
-  // send a GET to the bot. If CORS blocks the answer, at least deliver it.
   function ping(url, wantJson) {
     return fetch(url, { method: "GET", mode: "cors", cache: "no-store" })
       .then(function (r) { return wantJson ? r.json() : true; })
       .catch(function () {
         return fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" })
-          .then(function () { return wantJson ? null : true; })
-          .catch(function () { return null; });
+          .then(function () { return null; }).catch(function () { return null; });
       });
   }
 
-  // ---------- 1) the page is open: start the stopwatch in the bot ----------
-  function announceOpen() {
-    if (!CB || !TOKEN) {
-      say("⚠️ Open this page from the Telegram bot, not directly.", "bad");
-      go.textContent = "❌ Not available";
-      return;
-    }
-    readyAt = Date.now();
-    var url = join(CB, "t=" + encodeURIComponent(TOKEN) + "&a=start");
-    ping(url, true).then(function (d) {
-      if (d && typeof d.need !== "undefined") {
-        var n = parseInt(d.need, 10);
-        if (n > 0) { MIN = n; }
-      }
-      go.disabled = false;
-      go.textContent = "▶ Watch Ad";
-      say("✅ Ready. The ad must play for at least " + MIN + " seconds.", "wait");
-    });
+  // this Monetag zone only fills inside the Telegram Mini App container
+  var tg = null;
+  try { tg = window.Telegram && window.Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); } } catch (e) { tg = null; }
+  if (!tg) { info("no Telegram.WebApp — open from the bot"); }
+
+  if (!CB || !TOKEN) {
+    say("⚠️ This page must be opened from the bot.", "bad");
+    go.textContent = "❌ Not available";
+    return;
   }
 
-  // ---------- 2) report the finished ad ----------
+  // ---- 1) the page is open: start the stopwatch inside the bot ----
+  readyAt = Date.now();
+  ping(join(CB, "t=" + encodeURIComponent(TOKEN) + "&a=start"), true).then(function (d) {
+    if (d && d.need) { MIN = parseInt(d.need, 10) || MIN; }
+    go.disabled = false;
+    go.textContent = "▶ Watch Ad";
+    say("✅ Ready — the ad must run at least " + MIN + "s.", "wait");
+  });
+
+  // ---- 2) report the finished ad ----
   function report() {
-    var elapsed = Math.floor((Date.now() - readyAt) / 1000);
-    var left = MIN - elapsed;
-
-    if (left > 0) {
-      say("⏳ Keep the ad open — " + left + "s left…", "wait");
-      setTimeout(report, 1000);
-      return;
-    }
-
+    var left = MIN - Math.floor((Date.now() - readyAt) / 1000);
+    if (left > 0) { say("⏳ Keep it open — " + left + "s left…", "wait"); setTimeout(report, 1000); return; }
     say("⏳ Counting…", "wait");
-    var url = join(CB, "t=" + encodeURIComponent(TOKEN));
-    ping(url, true).then(function (d) {
+    ping(join(CB, "t=" + encodeURIComponent(TOKEN)), true).then(function (d) {
       if (d && (d.ok === true || d.verified === true)) {
         say("✅ Ad counted! Go back to Telegram.", "ok");
-        sub.textContent = "Your promo code progress was updated.";
+        sub.textContent = "Your promo progress was updated.";
       } else if (d && d.error === "too fast") {
-        say("⏱ The ad was too short. Watch it fully next time.", "bad");
-      } else if (d && d.error === "ad not opened") {
-        say("⚠️ Session lost. Go back to Telegram and tap Watch Ad again.", "bad");
-      } else if (d && d.error === "unknown token") {
-        say("⚠️ This link was already used. Tap Watch Ad again in the bot.", "bad");
+        say("⏱ Ad too short. Watch it fully.", "bad");
       } else if (d && d.error) {
         say("⚠️ " + d.error, "bad");
-      } else if (d === null) {
-        say("⚠️ Go back to Telegram and check 📊 Progress.", "bad");
       } else {
-        say("⚠️ Not counted. Tap Watch Ad again in the bot.", "bad");
+        say("⚠️ Go back to Telegram and check progress.", "bad");
       }
-      go.disabled = false;
-      go.textContent = "▶ Watch another ad";
-      busy = false;
+      go.disabled = false; go.textContent = "▶ Watch another ad"; busy = false;
     });
   }
 
-  // ---------- 3) the ad itself ----------
-  function startAd() {
-    if (busy || rewarded) { return; }
-    busy = true;
-    adOpen = true;
-    go.disabled = true;
-    go.textContent = "Loading ad…";
-    say("⏳ Opening the ad…", "wait");
-
-    var fn = window.show_9900692;
-    if (typeof fn !== "function") {
-      busy = false;
-      adOpen = false;
-      go.disabled = false;
-      go.textContent = "▶ Watch Ad";
-      say("⚠️ The ad did not load. Check your internet and reload this page.", "bad");
-      return;
-    }
-
-    function won() {
-      if (rewarded) { return; }
-      rewarded = true;
-      adOpen = false;
-      go.textContent = "⏳ Finishing…";
-      report();
-    }
-
-    var res;
-    try {
-      res = fn({
-        type: "rewarded",
-        callback: won,
-        onReward: won,
-        onClose: function () {
-          setTimeout(function () {
-            if (!rewarded) {
-              busy = false;
-              adOpen = false;
-              go.disabled = false;
-              go.textContent = "▶ Watch Ad";
-              say("❌ Ad skipped — not counted. Watch it to the end.", "bad");
-            }
-          }, 1200);
-        }
-      });
-    } catch (e) {
-      busy = false;
-      adOpen = false;
-      go.disabled = false;
-      go.textContent = "▶ Watch Ad";
-      say("⚠️ Could not open the ad. Reload and try again.", "bad");
-      return;
-    }
-
-    if (res && typeof res.then === "function") {
-      res.then(function () { won(); }, function () {
-        busy = false;
-        adOpen = false;
-        go.disabled = false;
-        go.textContent = "▶ Watch Ad";
-        say("❌ Ad not completed — not counted.", "bad");
-      });
-    }
+  function won() {
+    if (rewarded) { return; }
+    rewarded = true;
+    go.textContent = "⏳ Finishing…";
+    report();
   }
 
-  go.addEventListener("click", startAd);
-  announceOpen();
+  // ---- 3) wait for the SDK, then call it exactly like the snippet ----
+  function waitForSdk(tries) {
+    tries = tries || 0;
+    if (typeof window[FN] === "function") { startAd(); return; }
+    if (tries > 40) {
+      busy = false; go.disabled = false; go.textContent = "▶ Watch Ad";
+      say("❌ The ad script did not load. Check your internet and reload.", "bad");
+      info("window." + FN + " is " + typeof window[FN]);
+      return;
+    }
+    setTimeout(function () { waitForSdk(tries + 1); }, 200);
+  }
+
+  function startAd() {
+    busy = true;
+    go.disabled = true; go.textContent = "Loading ad…"; say("⏳ Opening the ad…", "wait");
+
+    var fn = window[FN];
+    var res;
+    try { res = fn(); }
+    catch (e) {
+      busy = false; go.disabled = false; go.textContent = "▶ Watch Ad";
+      say("⚠️ Could not open the ad. Reload and try again.", "bad");
+      info("call failed: " + e.message);
+      return;
+    }
+    info("called " + FN + "()");
+
+    // Monetag's snippet is show_XXXX().then(...) — a promise
+    if (res && typeof res.then === "function") {
+      res.then(function () { won(); })
+         .catch(function (err) {
+            busy = false; go.disabled = false; go.textContent = "▶ Watch Ad";
+            say("❌ No ad right now. Try again in a moment.", "bad");
+            info("rejected: " + (err && err.message ? err.message : err));
+         });
+      return;
+    }
+
+    // older SDK style: callbacks passed in
+    busy = false; rewarded = false;
+    say("⏳ Ad opened — finish it to get the count.", "wait");
+    go.textContent = "▶ Watch Ad";
+    go.disabled = false;
+  }
+
+  go.addEventListener("click", function () {
+    if (busy || rewarded) { return; }
+    if (typeof window[FN] !== "function") { busy = true; waitForSdk(0); return; }
+    startAd();
+  });
 })();
 </script>
 </body>
